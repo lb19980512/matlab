@@ -1,0 +1,142 @@
+clc;clear;close all;
+%% read hologram
+X=double(imread('Hologram cell.BMP'));
+[M,N]=size(X);
+subplot(2,2,1);
+imshow(X,[]);
+title('Hologram');
+
+%% Indentify the +1 order specturm
+RAWRFDH=zeros(size(X));
+
+FF=fft2(X);
+FF=fftshift(FF);
+
+NEWFF=zeros(size(FF));
+filtersizex=60;  % Band-pass-filter size x
+filtersizey=80;  % Band-pass-filter size y
+subplot(2,2,2);
+imshow((abs(FF)),[1,700000]);
+title('Raw Fourier');
+[xmax,ymax]=find(FF==max(max(FF(:,1:N/2-100))));
+
+NEWFF(xmax-filtersizex:xmax+filtersizex-1,ymax-filtersizey:ymax+filtersizey-1)=FF(xmax-filtersizex:xmax+filtersizex-1,ymax-filtersizey:ymax+filtersizey-1);
+subplot(2,2,3);
+imshow((abs(NEWFF)),[]);
+title('Filtered Fourier');
+
+%% system paras for hologram reconstruction
+h=0.633e-3;
+k=2*pi/h;  
+
+U0=double(X);
+L0X=(4.650e-3)*N;
+L0Y=(4.650e-3)*M;
+
+Uh=[0:N-1]-N/2;Vh=[0:N-1]-N/2;   
+[mh,nh]=meshgrid(Uh,Vh);
+
+n=1:N;
+m=1:M;
+x=h*(-N/L0X/2+1/L0X*(n-1));
+y=h*(-M/L0Y/2+1/L0Y*(m-1));
+[xx,yy] = meshgrid(x,y); 
+z0=0; %% distance
+RawDH=X;
+%% extract the +1 order for PCA
+
+FFRawDH=fft2(RawDH);
+FFRawDH=fftshift(FFRawDH);
+FFONEDH=zeros(size(FFRawDH));
+FFONEDH(xmax-filtersizex:xmax+filtersizex-1,ymax-filtersizey:ymax+filtersizey-1)=FFRawDH(xmax-filtersizex:xmax+filtersizex-1,ymax-filtersizey:ymax+filtersizey-1);
+
+
+ROI=FFONEDH(xmax-filtersizex:xmax+filtersizex-1,ymax-filtersizey:ymax+filtersizey-1);
+subplot(2,2,4);
+imshow(abs(ROI),[0,700000]);
+title('+1 order');
+%% Subsample the hologram and got the exponential term
+
+ONEDH=(ifft2(fftshift(ROI)));
+RAWRFDH=ONEDH;
+RFDH=exp(-i*angle(RAWRFDH));
+%% svd and got 1st PC for fitting
+[U,S,V] = svd(RFDH);
+Y = U*S*V';
+
+[m,n]=size(S); 
+SS=zeros(m,n); 
+SS(1,1)=S(1,1);
+Z= U*SS*V';
+SS(2,2)=S(2,2);
+Z2= U*SS*V';
+SS(3,3)=S(3,3);
+SS(4,4)=S(4,4);
+SS(5,5)=S(5,5);
+SS(6,6)=S(6,6);
+SS(7,6)=S(7,7);
+SS(7,7)=S(7,7);
+Z3= U*SS*V';
+
+figure
+subplot(1,3,1),imshow(angle(Z),[]); 
+colormap(gray);
+title('1st PC');
+subplot(1,3,2),imshow(angle(Z2),[]);
+colormap(gray);
+title('1st+2nd PCs');
+subplot(1,3,3),imshow(angle(Z3),[]);
+colormap(gray);
+title('1st-7th PCs');
+
+UNU1=unwrap(angle(U(:,1)));
+A=polyfit(1:filtersizex*2,UNU1',2);
+NewUN1=polyval(A,1:filtersizex*2);
+NEWU1=exp(i.*(NewUN1'));
+U(:,1)=NEWU1;
+
+UNV1=unwrap(angle(V(:,1)));
+A=polyfit(1:filtersizey*2,UNV1',2);
+NewUNV1=polyval(A,1:filtersizey*2);
+NEWV1=exp(i.*((NewUNV1')));
+V(:,1)=NEWV1;
+
+SS=zeros(m,n); 
+SS(1,1)=S(1,1);
+Z= U*SS*V';
+
+
+figure
+subplot(1,3,1),
+imshow(angle(RAWRFDH),[]);
+title('Raw subsampled phase');
+subplot(1,3,2)
+imshow(angle(Z),[]);
+title('Conjugated phase extracted');
+FFONEDHNEW=FFONEDH;
+
+
+%% compensation using extracted abberation term (the specturm centering is done after the PCA compensation （while in the paper is done before it), which actually does not affect the result.
+
+FFONEDHNEW(xmax-filtersizex:xmax+filtersizex-1,ymax-filtersizey:ymax+filtersizey-1)=fftshift(fft2(((RAWRFDH).*Z)));
+
+[xmax,ymax]=find(FFONEDHNEW==max(max(FFONEDHNEW(:,1:N/2-100))));
+% xmax=xmax-3;
+% ymax=ymax-3;
+filtersize=100;
+NEWFF=zeros(size(FF));
+NEWFF(M/2+1-filtersize:M/2+filtersize,N/2+1-filtersize:N/2+filtersize)=FFONEDHNEW(xmax-filtersize:xmax+filtersize-1,ymax-filtersize:ymax+filtersize-1);
+subplot(1,3,3)
+imshow(log(abs(NEWFF)+1),[]);
+title('Compensated spectrum');
+
+
+%% numerical reconstruction (In fact, here is no need because z0=0 as we record the
+%% hologram at the focus plane)
+trans=exp(i*k*z0*sqrt(1-xx.^2-yy.^2)); %angular frequency method
+result=NEWFF.*trans;
+Uf=ifft2(fftshift(result));
+If=Uf.*conj(Uf);
+figure
+imshow(angle(Uf),[]),colormap(gray);
+title('Final result');
